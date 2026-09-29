@@ -1,0 +1,16 @@
+# Gradle generated files
+.gradle/
+build/
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# RuneLite/Jagex credentials - NEVER COMMIT
+credentials.properties
