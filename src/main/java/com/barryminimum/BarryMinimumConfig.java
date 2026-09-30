@@ -14,7 +14,8 @@ public interface BarryMinimumConfig extends Config
     @ConfigItem(
             keyName = "activeWindowSeconds",
             name = "Non-AFK countdown (seconds)",
-            description = "After the second qualifying interaction, Barry remains non-AFK until this many seconds pass without another qualifying interaction."
+            description = "After the second qualifying interaction, Barry remains non-AFK until this many seconds pass without another qualifying interaction.",
+            position = 0
     )
     default int activeWindowSeconds()
     {
@@ -58,9 +59,44 @@ public interface BarryMinimumConfig extends Config
     }
 
     @ConfigItem(
+            keyName = "currentNonAfkTime",
+            name = "Current non-AFK time",
+            description = "Current lifetime non-AFK time, including the manual starting value and all time tracked by this installation.",
+            position = 4
+    )
+    default String currentNonAfkTime()
+    {
+        return "0d 00h 00m 00s";
+    }
+
+    @ConfigItem(
+            keyName = "trackGpPerHour",
+            name = "Track GP/hr",
+            description = "When enabled, qualifying items entering the inventory are added to the rolling 60-minute GP/hr calculation.",
+            position = 5
+    )
+    default boolean trackGpPerHour()
+    {
+        return false;
+    }
+
+    @Range(min = 0)
+    @ConfigItem(
+            keyName = "startingLifetimeProfitGp",
+            name = "Starting lifetime profit (GP)",
+            description = "Lifetime realized GP earned before this installation.",
+            position = 6
+    )
+    default int startingLifetimeProfitGp()
+    {
+        return 0;
+    }
+
+    @ConfigItem(
             keyName = "showOverlay",
-            name = "Show AFK Purity overlay",
-            description = "Show Barry Minimum's live AFK Purity and AFK status."
+            name = "Show Barry Minimum overlay",
+            description = "Show Barry Minimum's AFK and economic metrics.",
+            position = 7
     )
     default boolean showOverlay()
     {
