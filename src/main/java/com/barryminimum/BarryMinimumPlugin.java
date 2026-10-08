@@ -14,15 +14,17 @@ import net.runelite.api.GameState;
 import net.runelite.api.Item;
 import net.runelite.api.ItemContainer;
 import net.runelite.api.MenuAction;
+import net.runelite.api.Player;
+import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.api.events.VarClientIntChanged;
 import net.runelite.api.gameval.InventoryID;
-import net.runelite.api.gameval.ItemID;
 import net.runelite.api.widgets.WidgetID;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.plugins.Plugin;
@@ -32,8 +34,8 @@ import net.runelite.client.ui.overlay.OverlayManager;
 @Slf4j
 @PluginDescriptor(
         name = "Barry Minimum",
-        description = "Tracks Barry Minimum's lifetime AFK Purity and economic progress.",
-        tags = {"afk", "tracker", "challenge", "metrics", "profit", "bond"}
+        description = "Tracks Barry Minimum's AFK Purity, non-AFK time, and rolling GP/hour.",
+        tags = {"afk", "tracker", "challenge", "metrics", "gp"}
 )
 public class BarryMinimumPlugin extends Plugin
 {
@@ -41,11 +43,6 @@ public class BarryMinimumPlugin extends Plugin
      * OSRS total account playtime in minutes.
      */
     private static final int PLAYTIME_VARC = 526;
-
-    /*
-     * Tradeable Old School Bond.
-     */
-    private static final int OLD_SCHOOL_BOND_ID = 13190;
 
     /*
      * Rolling GP/hr window.
@@ -58,12 +55,8 @@ public class BarryMinimumPlugin extends Plugin
      */
     private static final String STORED_NON_AFK_MS =
             "storedNonAfkMs";
-
-    private static final String STORED_LIFETIME_PROFIT_GP =
-            "storedLifetimeProfitGp";
-
-    private static final String STORED_BANK_CASH_GP =
-            "storedBankCashGp";
+    private static final String STORED_INACTIVE_MS = "storedInactiveMs";
+    private static final String STARTING_TIME_MIGRATED = "startingTimeMigrated";
 
     private static final long MAX_TICK_GAP_MS = 2_000L;
 
@@ -85,22 +78,28 @@ public class BarryMinimumPlugin extends Plugin
     @Inject
     private ItemManager itemManager;
 
+    // Last values written by the plugin. Used to distinguish user edits from live refreshes.
+    private static final String[][] TIME_KEYS = {
+            {"totalNonAfkDays", "totalNonAfkHours", "totalNonAfkMinutes", "totalNonAfkSeconds"},
+            {"totalInactiveDays", "totalInactiveHours", "totalInactiveMinutes", "totalInactiveSeconds"}
+    };
+    private final long[][] displayedTime = {{-1, -1, -1, -1}, {-1, -1, -1, -1}};
+    private boolean updatingTimeFields;
+
     /*
      * Lifetime AFK data.
      */
     private long storedNonAfkMs;
+    private long storedInactiveMs;
 
-    /*
-     * Lifetime realized profit.
-     *
-     * This remains separate from rolling GP/hr.
-     */
-    private long storedLifetimeProfitGp;
-
-    /*
-     * Actual coins currently stored in the bank.
-     */
-    private long storedBankCashGp;
+    // Idle detection is based on the local player's movement and animation.
+    // An animation may pause briefly during a legitimate skilling action,
+    // so we wait for a short quiet period before confirming idleness.
+    private static final long ACTIVITY_GRACE_SECONDS = 8L;
+    private Instant lastActivitySignal;
+    private Instant idleSince;
+    private WorldPoint previousLocation;
+    private boolean inactive;
 
     /*
      * Inventory snapshot used to identify positive inventory gains.
@@ -159,11 +158,11 @@ public class BarryMinimumPlugin extends Plugin
             loadProfileData();
             syncGameTimeFromOsrs();
             initializeInventorySnapshot();
-            updateBankCashIfAvailable();
 
             lastAccountingTime = Instant.now();
+            resetIdleTracking(lastAccountingTime);
 
-            updateCurrentNonAfkReadout();
+            updateTimeReadouts();
         }
 
         log.debug("Barry Minimum tracker started");
@@ -173,12 +172,12 @@ public class BarryMinimumPlugin extends Plugin
     protected void shutDown()
     {
         accountUntil(Instant.now());
-        updateCurrentNonAfkReadout();
+        updateTimeReadouts();
         persistProfileData();
 
         overlayManager.remove(overlay);
-
         lastAccountingTime = null;
+        resetIdleTracking(null);
         lastQualifyingInteraction = null;
         gameTimeSyncInstant = null;
 
@@ -209,22 +208,23 @@ public class BarryMinimumPlugin extends Plugin
              */
             initializeInventorySnapshot();
 
-            updateBankCashIfAvailable();
 
             lastAccountingTime = now;
+            resetIdleTracking(now);
             lastQualifyingInteraction = null;
             nonAfk = false;
 
-            updateCurrentNonAfkReadout();
+            updateTimeReadouts();
 
             return;
         }
 
         accountUntil(now);
-        updateCurrentNonAfkReadout();
+        updateTimeReadouts();
         persistProfileData();
 
         lastAccountingTime = null;
+        resetIdleTracking(null);
         lastQualifyingInteraction = null;
         gameTimeSyncInstant = null;
 
@@ -245,6 +245,7 @@ public class BarryMinimumPlugin extends Plugin
         Instant now = Instant.now();
 
         accountUntil(now);
+        observeCharacterActivity(now);
 
         /*
          * Continuously expire GP gains that are more than
@@ -255,7 +256,7 @@ public class BarryMinimumPlugin extends Plugin
         /*
          * Keep the settings readout current.
          */
-        updateCurrentNonAfkReadout();
+        updateTimeReadouts();
 
         persistProfileData();
     }
@@ -287,62 +288,12 @@ public class BarryMinimumPlugin extends Plugin
             return;
         }
 
-        if (event.getContainerId() == InventoryID.BANK)
-        {
-            updateBankCash(event.getItemContainer());
-            return;
-        }
-
         if (event.getContainerId() == InventoryID.INV)
         {
             processInventoryChange(
                     event.getItemContainer()
             );
         }
-    }
-
-    /*
-     * BOND PROGRESS
-     *
-     * Only actual coins in the bank count.
-     */
-    private void updateBankCashIfAvailable()
-    {
-        ItemContainer bank =
-                client.getItemContainer(InventoryID.BANK);
-
-        if (bank != null)
-        {
-            updateBankCash(bank);
-        }
-    }
-
-    private void updateBankCash(ItemContainer bank)
-    {
-        if (bank == null)
-        {
-            return;
-        }
-
-        long coins = 0L;
-
-        for (Item item : bank.getItems())
-        {
-            if (item.getId() == ItemID.COINS)
-            {
-                coins += item.getQuantity();
-            }
-        }
-
-        storedBankCashGp =
-                Math.max(0L, coins);
-
-        persistProfileData();
-
-        log.debug(
-                "Barry bank cash updated: {} GP",
-                storedBankCashGp
-        );
     }
 
     /*
@@ -440,7 +391,7 @@ public class BarryMinimumPlugin extends Plugin
 
                 long unitValue;
 
-                if (itemId == ItemID.COINS)
+                if (itemId == 995)
                 {
                     unitValue = 1L;
                 }
@@ -616,6 +567,9 @@ public class BarryMinimumPlugin extends Plugin
                 Instant.now();
 
         accountUntil(now);
+        lastActivitySignal = now;
+        idleSince = null;
+        inactive = false;
 
         long windowSeconds =
                 config.activeWindowSeconds();
@@ -641,7 +595,7 @@ public class BarryMinimumPlugin extends Plugin
             lastQualifyingInteraction = now;
         }
 
-        updateCurrentNonAfkReadout();
+        updateTimeReadouts();
         persistProfileData();
     }
 
@@ -672,8 +626,9 @@ public class BarryMinimumPlugin extends Plugin
                         MAX_TICK_GAP_MS
                 );
 
-        if (nonAfk
-                && lastQualifyingInteraction != null)
+        Instant nonAfkDeadline = nonAfk && lastQualifyingInteraction != null
+                ? lastQualifyingInteraction.plusSeconds(config.activeWindowSeconds()) : null;
+        if (nonAfkDeadline != null)
         {
             Instant deadline =
                     lastQualifyingInteraction.plusSeconds(
@@ -708,7 +663,79 @@ public class BarryMinimumPlugin extends Plugin
             }
         }
 
+        // Count only the interval after the idle threshold. Never count
+        // the same milliseconds as non-AFK, even across a timer boundary.
+        if (idleSince != null)
+        {
+            Instant inactiveStart = idleSince.plusSeconds(config.inactiveThresholdSeconds());
+            Instant chargeFrom = lastAccountingTime.isAfter(inactiveStart)
+                    ? lastAccountingTime : inactiveStart;
+            // An ACTIVE interval always wins over an INACTIVE interval.
+            if (nonAfkDeadline != null && nonAfkDeadline.isAfter(chargeFrom))
+            {
+                chargeFrom = nonAfkDeadline;
+            }
+            if (now.isAfter(chargeFrom))
+            {
+                long inactiveMs = Duration.between(chargeFrom, now).toMillis();
+                // The MAX_TICK_GAP limit also applies to inactive time.
+                if (!nonAfk && (lastQualifyingInteraction == null
+                        || !now.isBefore(lastQualifyingInteraction.plusSeconds(config.activeWindowSeconds()))))
+                {
+                    storedInactiveMs += Math.min(inactiveMs, elapsedMs);
+                }
+            }
+        }
+
         lastAccountingTime = now;
+    }
+
+    private void resetIdleTracking(Instant now)
+    {
+        idleSince = null;
+        lastActivitySignal = now;
+        previousLocation = null;
+        inactive = false;
+    }
+
+    private void observeCharacterActivity(Instant now)
+    {
+        Player player = client.getLocalPlayer();
+        if (player == null)
+        {
+            // Unknown player state must not be classified as idle.
+            resetIdleTracking(now);
+            return;
+        }
+
+        WorldPoint location = player.getWorldLocation();
+        boolean moved = previousLocation != null && !previousLocation.equals(location);
+        previousLocation = location;
+
+        // A repeated animation, ongoing movement or an interaction target
+        // is positive evidence of activity. This is a heuristic, not a
+        // definitive determination of whether skilling continues.
+        boolean activity = moved || player.getAnimation() != -1
+                || player.getInteracting() != null;
+        if (activity)
+        {
+            lastActivitySignal = now;
+            idleSince = null;
+            inactive = false;
+            return;
+        }
+
+        if (lastActivitySignal == null)
+        {
+            lastActivitySignal = now;
+        }
+        if (idleSince == null && !now.isBefore(
+                lastActivitySignal.plusSeconds(ACTIVITY_GRACE_SECONDS)))
+        {
+            idleSince = now;
+        }
+        inactive = !nonAfk && idleSince != null
+                && !now.isBefore(idleSince.plusSeconds(config.inactiveThresholdSeconds()));
     }
 
     /*
@@ -744,66 +771,105 @@ public class BarryMinimumPlugin extends Plugin
         );
     }
 
-    /*
-     * CURRENT NON-AFK READOUT
-     *
-     * This writes the total to the RuneLite settings panel so it can
-     * easily be copied/migrated to another computer.
-     */
-    private void updateCurrentNonAfkReadout()
+    /** Keep both live totals in the native RuneLite settings page. */
+    private void updateTimeReadouts()
     {
-        long totalMs =
-                getLifetimeNonAfkMs();
+        updateTimeReadout(0, getLifetimeNonAfkMs());
+        updateTimeReadout(1, getLifetimeInactiveMs());
+    }
 
-        String formatted =
-                formatDuration(totalMs);
-
-        String existing =
-                configManager.getConfiguration(
-                        BarryMinimumConfig.GROUP,
-                        "currentNonAfkTime"
-                );
-
-        if (!formatted.equals(existing))
+    private void updateTimeReadout(int type, long milliseconds)
+    {
+        long seconds = Math.max(0L, milliseconds / 1000L);
+        long[] parts = {seconds / 86400L, (seconds / 3600L) % 24L,
+                (seconds / 60L) % 60L, seconds % 60L};
+        updatingTimeFields = true;
+        try
         {
-            configManager.setConfiguration(
-                    BarryMinimumConfig.GROUP,
-                    "currentNonAfkTime",
-                    formatted
-            );
+            for (int i = 0; i < 4; i++)
+            {
+                long part = Math.min(parts[i], Integer.MAX_VALUE);
+                if (displayedTime[type][i] != part)
+                {
+                    displayedTime[type][i] = part;
+                    configManager.setConfiguration(BarryMinimumConfig.GROUP,
+                            TIME_KEYS[type][i], part);
+                }
+            }
+        }
+        finally
+        {
+            updatingTimeFields = false;
         }
     }
 
-    private String formatDuration(
-            long milliseconds)
+    @Subscribe
+    public void onConfigChanged(ConfigChanged event)
     {
-        long totalSeconds =
-                Math.max(
-                        0L,
-                        milliseconds / 1000L
-                );
+        if (!BarryMinimumConfig.GROUP.equals(event.getGroup()) || updatingTimeFields)
+        {
+            return;
+        }
+        int type = -1;
+        int index = -1;
+        for (int t = 0; t < TIME_KEYS.length; t++)
+        {
+            for (int i = 0; i < 4; i++)
+            {
+                if (TIME_KEYS[t][i].equals(event.getKey()))
+                {
+                    type = t;
+                    index = i;
+                    break;
+                }
+            }
+        }
+        if (type < 0 || client.getGameState() != GameState.LOGGED_IN)
+        {
+            return;
+        }
+        long newPart;
+        try
+        {
+            newPart = Long.parseLong(event.getNewValue());
+        }
+        catch (NumberFormatException ex)
+        {
+            return;
+        }
+        if (newPart < 0 || (index > 0 && newPart >= (index == 1 ? 24 : 60))
+                || displayedTime[type][index] == newPart)
+        {
+            return;
+        }
 
-        long days =
-                totalSeconds / 86_400L;
-
-        long hours =
-                (totalSeconds % 86_400L)
-                        / 3_600L;
-
-        long minutes =
-                (totalSeconds % 3_600L)
-                        / 60L;
-
-        long seconds =
-                totalSeconds % 60L;
-
-        return String.format(
-                "%dd %02dh %02dm %02ds",
-                days,
-                hours,
-                minutes,
-                seconds
-        );
+        Instant now = Instant.now();
+        accountUntil(now);
+        long seconds = (type == 0 ? getLifetimeNonAfkMs() : getLifetimeInactiveMs()) / 1000L;
+        long[] parts = {seconds / 86400L, (seconds / 3600L) % 24L,
+                (seconds / 60L) % 60L, seconds % 60L};
+        parts[index] = newPart;
+        try
+        {
+            long newSeconds = Math.addExact(
+                    Math.addExact(Math.multiplyExact(parts[0], 86400L),
+                            Math.multiplyExact(parts[1], 3600L)),
+                    Math.addExact(Math.multiplyExact(parts[2], 60L), parts[3]));
+            if (type == 0)
+            {
+                storedNonAfkMs = Math.multiplyExact(newSeconds, 1000L);
+            }
+            else
+            {
+                storedInactiveMs = Math.multiplyExact(newSeconds, 1000L);
+            }
+            persistProfileData();
+            updateTimeReadouts();
+        }
+        catch (ArithmeticException ex)
+        {
+            log.warn("Time correction is too large", ex);
+        }
     }
 
     /*
@@ -811,20 +877,47 @@ public class BarryMinimumPlugin extends Plugin
      */
     private void loadProfileData()
     {
-        storedNonAfkMs =
-                readProfileLong(
-                        STORED_NON_AFK_MS
-                );
+        for (long[] row : displayedTime)
+        {
+            java.util.Arrays.fill(row, -1L);
+        }
+        storedNonAfkMs = readProfileLong(STORED_NON_AFK_MS);
+        storedInactiveMs = readProfileLong(STORED_INACTIVE_MS);
 
-        storedLifetimeProfitGp =
-                readProfileLong(
-                        STORED_LIFETIME_PROFIT_GP
-                );
+        // One-time migration of the old editable starting-time settings.
+        // Existing tracked time is preserved and the starting offset is applied once.
+        String migrated = configManager.getRSProfileConfiguration(
+                BarryMinimumConfig.GROUP, STARTING_TIME_MIGRATED);
+        if (!"true".equals(migrated))
+        {
+            long oldDays = readLegacyStartingValue("startingNonAfkDays");
+            long oldHours = readLegacyStartingValue("startingNonAfkHours");
+            long oldMinutes = readLegacyStartingValue("startingNonAfkMinutes");
+            storedNonAfkMs += oldDays * 86_400_000L
+                    + oldHours * 3_600_000L + oldMinutes * 60_000L;
+            configManager.setRSProfileConfiguration(
+                    BarryMinimumConfig.GROUP, STORED_NON_AFK_MS, storedNonAfkMs);
+            configManager.setRSProfileConfiguration(
+                    BarryMinimumConfig.GROUP, STARTING_TIME_MIGRATED, "true");
+        }
 
-        storedBankCashGp =
-                readProfileLong(
-                        STORED_BANK_CASH_GP
-                );
+    }
+
+    private long readLegacyStartingValue(String key)
+    {
+        String value = configManager.getConfiguration(BarryMinimumConfig.GROUP, key);
+        if (value == null)
+        {
+            return 0L;
+        }
+        try
+        {
+            return Math.max(0L, Long.parseLong(value));
+        }
+        catch (NumberFormatException ex)
+        {
+            return 0L;
+        }
     }
 
     private long readProfileLong(
@@ -871,18 +964,8 @@ public class BarryMinimumPlugin extends Plugin
                 STORED_NON_AFK_MS,
                 storedNonAfkMs
         );
-
         configManager.setRSProfileConfiguration(
-                BarryMinimumConfig.GROUP,
-                STORED_LIFETIME_PROFIT_GP,
-                storedLifetimeProfitGp
-        );
-
-        configManager.setRSProfileConfiguration(
-                BarryMinimumConfig.GROUP,
-                STORED_BANK_CASH_GP,
-                storedBankCashGp
-        );
+                BarryMinimumConfig.GROUP, STORED_INACTIVE_MS, storedInactiveMs);
     }
 
     /*
@@ -978,49 +1061,31 @@ public class BarryMinimumPlugin extends Plugin
         );
     }
 
-    /*
-     * Manual starting time
-     * +
-     * time accumulated by this installation.
-     */
     long getLifetimeNonAfkMs()
     {
-        long startingNonAfkMs =
-                config.startingNonAfkDays()
-                        * 86_400_000L
-                        + config.startingNonAfkHours()
-                        * 3_600_000L
-                        + config.startingNonAfkMinutes()
-                        * 60_000L;
+        return Math.max(0L, storedNonAfkMs);
+    }
 
-        return storedNonAfkMs
-                + startingNonAfkMs;
+    long getLifetimeInactiveMs()
+    {
+        return Math.max(0L, storedInactiveMs);
     }
 
     double getAfkPurity()
     {
-        long total =
-                getLifetimeGameMs();
-
-        if (total <= 0L)
+        long total = getLifetimeGameMs();
+        long eligible = Math.max(0L, total - getLifetimeInactiveMs());
+        if (eligible == 0L)
         {
             return 100.0;
         }
+        long active = Math.min(getLifetimeNonAfkMs(), eligible);
+        return 100.0 * (1.0 - (double) active / eligible);
+    }
 
-        long active =
-                Math.min(
-                        getLifetimeNonAfkMs(),
-                        total
-                );
-
-        return 100.0
-                * (
-                1.0
-                        - (
-                        (double) active
-                                / (double) total
-                )
-        );
+    boolean isInactive()
+    {
+        return inactive && !nonAfk;
     }
 
     /*
@@ -1035,85 +1100,10 @@ public class BarryMinimumPlugin extends Plugin
         return getRollingGpValue();
     }
 
-    long getLifetimeProfitGp()
-    {
-        return Math.max(
-                0L,
-                (long) config.startingLifetimeProfitGp()
-                        + storedLifetimeProfitGp
-        );
-    }
-
-    long getCurrentBankCashGp()
-    {
-        return Math.max(
-                0L,
-                storedBankCashGp
-        );
-    }
-
-    long getCurrentBondPriceGp()
-    {
-        long price =
-                itemManager.getItemPrice(
-                        OLD_SCHOOL_BOND_ID
-                );
-
-        return Math.max(
-                0L,
-                price
-        );
-    }
-
-    /*
-     * Bond Progress =
-     *
-     * coins currently in bank
-     * ----------------------- x 100
-     * current Bond price
-     */
-    double getBondProgressPercent()
-    {
-        long bondPrice =
-                getCurrentBondPriceGp();
-
-        if (bondPrice <= 0L)
-        {
-            return 0.0;
-        }
-
-        return 100.0
-                * (
-                (double) getCurrentBankCashGp()
-                        / (double) bondPrice
-        );
-    }
-
-    String getFormattedBondProgress()
-    {
-        if (getCurrentBondPriceGp()
-                <= 0L)
-        {
-            return "N/A";
-        }
-
-        return String.format(
-                "%.1f%%",
-                getBondProgressPercent()
-        );
-    }
-
     String getFormattedGpPerHour()
     {
         return formatGp(
                 getRollingGpPerHour()
-        );
-    }
-
-    String getFormattedLifetimeProfit()
-    {
-        return formatGp(
-                getLifetimeProfitGp()
         );
     }
 

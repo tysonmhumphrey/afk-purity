@@ -11,95 +11,60 @@ public interface BarryMinimumConfig extends Config
     String GROUP = "barryminimum";
 
     @Range(min = 1, max = 300)
-    @ConfigItem(
-            keyName = "activeWindowSeconds",
-            name = "Non-AFK countdown (seconds)",
-            description = "After the second qualifying interaction, Barry remains non-AFK until this many seconds pass without another qualifying interaction.",
-            position = 0
-    )
-    default int activeWindowSeconds()
-    {
-        return 30;
-    }
+    @ConfigItem(keyName = "activeWindowSeconds", name = "Non-AFK countdown (seconds)",
+            description = "Seconds before the character returns to AFK status.", position = 0)
+    default int activeWindowSeconds() { return 30; }
 
     @Range(min = 0)
-    @ConfigItem(
-            keyName = "startingNonAfkDays",
-            name = "Starting non-AFK days",
-            description = "Days of lifetime non-AFK time accumulated before this installation.",
-            position = 1
-    )
-    default int startingNonAfkDays()
-    {
-        return 0;
-    }
+    @ConfigItem(keyName = "totalNonAfkDays", name = "Total non-AFK days",
+            description = "Live lifetime total. Change this number to correct the total.", position = 1)
+    default int totalNonAfkDays() { return 0; }
 
     @Range(min = 0, max = 23)
-    @ConfigItem(
-            keyName = "startingNonAfkHours",
-            name = "Starting non-AFK hours",
-            description = "Hours of lifetime non-AFK time accumulated before this installation.",
-            position = 2
-    )
-    default int startingNonAfkHours()
-    {
-        return 0;
-    }
+    @ConfigItem(keyName = "totalNonAfkHours", name = "Total non-AFK hours",
+            description = "Live lifetime hours (0-23). Change this number to correct the total.", position = 2)
+    default int totalNonAfkHours() { return 0; }
 
     @Range(min = 0, max = 59)
-    @ConfigItem(
-            keyName = "startingNonAfkMinutes",
-            name = "Starting non-AFK minutes",
-            description = "Minutes of lifetime non-AFK time accumulated before this installation.",
-            position = 3
-    )
-    default int startingNonAfkMinutes()
-    {
-        return 0;
-    }
+    @ConfigItem(keyName = "totalNonAfkMinutes", name = "Total non-AFK minutes",
+            description = "Live lifetime minutes (0-59). Change this number to correct the total.", position = 3)
+    default int totalNonAfkMinutes() { return 0; }
 
-    @ConfigItem(
-            keyName = "currentNonAfkTime",
-            name = "Current non-AFK time",
-            description = "Current lifetime non-AFK time, including the manual starting value and all time tracked by this installation.",
-            position = 4
-    )
-    default String currentNonAfkTime()
-    {
-        return "0d 00h 00m 00s";
-    }
+    @Range(min = 0, max = 59)
+    @ConfigItem(keyName = "totalNonAfkSeconds", name = "Total non-AFK seconds",
+            description = "Live lifetime seconds (0-59). Change this number to correct the total.", position = 4)
+    default int totalNonAfkSeconds() { return 0; }
 
-    @ConfigItem(
-            keyName = "trackGpPerHour",
-            name = "Track GP/hr",
-            description = "When enabled, qualifying items entering the inventory are added to the rolling 60-minute GP/hr calculation.",
-            position = 5
-    )
-    default boolean trackGpPerHour()
-    {
-        return false;
-    }
+    @Range(min = 10, max = 600)
+    @ConfigItem(keyName = "inactiveThresholdSeconds", name = "Inactive after idle (seconds)",
+            description = "After this many seconds of confirmed idleness, time is excluded from AFK Purity.", position = 5)
+    default int inactiveThresholdSeconds() { return 60; }
 
     @Range(min = 0)
-    @ConfigItem(
-            keyName = "startingLifetimeProfitGp",
-            name = "Starting lifetime profit (GP)",
-            description = "Lifetime realized GP earned before this installation.",
-            position = 6
-    )
-    default int startingLifetimeProfitGp()
-    {
-        return 0;
-    }
+    @ConfigItem(keyName = "totalInactiveDays", name = "Total inactive days",
+            description = "Live lifetime inactive days. Editable.", position = 6)
+    default int totalInactiveDays() { return 0; }
 
-    @ConfigItem(
-            keyName = "showOverlay",
-            name = "Show Barry Minimum overlay",
-            description = "Show Barry Minimum's AFK and economic metrics.",
-            position = 7
-    )
-    default boolean showOverlay()
-    {
-        return true;
-    }
+    @Range(min = 0, max = 23)
+    @ConfigItem(keyName = "totalInactiveHours", name = "Total inactive hours",
+            description = "Live lifetime inactive hours. Editable.", position = 7)
+    default int totalInactiveHours() { return 0; }
+
+    @Range(min = 0, max = 59)
+    @ConfigItem(keyName = "totalInactiveMinutes", name = "Total inactive minutes",
+            description = "Live lifetime inactive minutes. Editable.", position = 8)
+    default int totalInactiveMinutes() { return 0; }
+
+    @Range(min = 0, max = 59)
+    @ConfigItem(keyName = "totalInactiveSeconds", name = "Total inactive seconds",
+            description = "Live lifetime inactive seconds. Editable.", position = 9)
+    default int totalInactiveSeconds() { return 0; }
+
+    @ConfigItem(keyName = "trackGpPerHour", name = "Track GP/hr",
+            description = "Track qualifying inventory gains over the previous 60 minutes.", position = 10)
+    default boolean trackGpPerHour() { return false; }
+
+    @ConfigItem(keyName = "showOverlay", name = "Show Barry Minimum overlay",
+            description = "Show AFK Purity, status and GP/hour on screen.", position = 11)
+    default boolean showOverlay() { return true; }
 }

@@ -82,52 +82,17 @@ public class BarryMinimumOverlay extends OverlayPanel
          * STATUS
          */
         boolean active = plugin.isNonAfk();
+        boolean inactive = plugin.isInactive();
 
-        String statusText =
-                active
-                        ? "ACTIVE ("
-                        + plugin.getSecondsUntilAfk()
-                        + "s)"
-                        : "AFK";
+        String statusText = active
+                ? "ACTIVE (" + plugin.getSecondsUntilAfk() + "s)"
+                : inactive ? "INACTIVE" : "AFK";
 
         panelComponent.getChildren().add(
                 LineComponent.builder()
                         .left("Status")
                         .right(statusText)
-                        .rightColor(active ? BAD_COLOR : GOOD_COLOR)
-                        .build()
-        );
-
-        /*
-         * BOND PROGRESS
-         *
-         * < 50%      = red
-         * 50 - 99.9% = normal
-         * >= 100%    = green
-         */
-        double bondProgress =
-                plugin.getBondProgressPercent();
-
-        Color bondProgressColor;
-
-        if (bondProgress < 50.0)
-        {
-            bondProgressColor = BAD_COLOR;
-        }
-        else if (bondProgress < 100.0)
-        {
-            bondProgressColor = NORMAL_COLOR;
-        }
-        else
-        {
-            bondProgressColor = GOOD_COLOR;
-        }
-
-        panelComponent.getChildren().add(
-                LineComponent.builder()
-                        .left("Bond Progress")
-                        .right(plugin.getFormattedBondProgress())
-                        .rightColor(bondProgressColor)
+                        .rightColor(active ? BAD_COLOR : inactive ? Color.YELLOW : GOOD_COLOR)
                         .build()
         );
 
@@ -140,17 +105,9 @@ public class BarryMinimumOverlay extends OverlayPanel
         panelComponent.getChildren().add(
                 LineComponent.builder()
                         .left("GP / Hour")
-                        .right(plugin.getFormattedGpPerHour())
-                        .build()
-        );
-
-        /*
-         * LIFETIME REALIZED PROFIT
-         */
-        panelComponent.getChildren().add(
-                LineComponent.builder()
-                        .left("Lifetime Profit")
-                        .right(plugin.getFormattedLifetimeProfit())
+                        .right(config.trackGpPerHour()
+                                ? plugin.getFormattedGpPerHour() : "Not Active")
+                        .rightColor(config.trackGpPerHour() ? NORMAL_COLOR : BAD_COLOR)
                         .build()
         );
 
