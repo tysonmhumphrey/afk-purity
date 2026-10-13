@@ -1,13 +1,14 @@
-package com.barryminimum;
+package com.afkpurity;
 
 import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
 import net.runelite.client.config.Range;
 
-@ConfigGroup(BarryMinimumConfig.GROUP)
-public interface BarryMinimumConfig extends Config
+@ConfigGroup(AfkPurityConfig.GROUP)
+public interface AfkPurityConfig extends Config
 {
+    // Legacy storage group retained intentionally to preserve existing account statistics.
     String GROUP = "barryminimum";
 
     @Range(min = 1, max = 300)
@@ -64,7 +65,7 @@ public interface BarryMinimumConfig extends Config
             description = "Track qualifying inventory gains over the previous 60 minutes.", position = 10)
     default boolean trackGpPerHour() { return false; }
 
-    @ConfigItem(keyName = "showOverlay", name = "Show Barry Minimum overlay",
+    @ConfigItem(keyName = "showOverlay", name = "Show AFK Purity overlay",
             description = "Show AFK Purity, status and GP/hour on screen.", position = 11)
     default boolean showOverlay() { return true; }
 }

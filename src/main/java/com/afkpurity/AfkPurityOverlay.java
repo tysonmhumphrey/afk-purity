@@ -1,4 +1,4 @@
-package com.barryminimum;
+package com.afkpurity;
 
 import java.awt.Color;
 import java.awt.Dimension;
@@ -8,7 +8,7 @@ import net.runelite.client.ui.overlay.OverlayPanel;
 import net.runelite.client.ui.overlay.components.LineComponent;
 import net.runelite.client.ui.overlay.components.TitleComponent;
 
-public class BarryMinimumOverlay extends OverlayPanel
+public class AfkPurityOverlay extends OverlayPanel
 {
     private static final int MINIMUM_WIDTH = 210;
 
@@ -16,13 +16,13 @@ public class BarryMinimumOverlay extends OverlayPanel
     private static final Color BAD_COLOR = Color.RED;
     private static final Color NORMAL_COLOR = Color.WHITE;
 
-    private final BarryMinimumPlugin plugin;
-    private final BarryMinimumConfig config;
+    private final AfkPurityPlugin plugin;
+    private final AfkPurityConfig config;
 
     @Inject
-    private BarryMinimumOverlay(
-            BarryMinimumPlugin plugin,
-            BarryMinimumConfig config)
+    private AfkPurityOverlay(
+            AfkPurityPlugin plugin,
+            AfkPurityConfig config)
     {
         this.plugin = plugin;
         this.config = config;
@@ -42,7 +42,7 @@ public class BarryMinimumOverlay extends OverlayPanel
 
         panelComponent.getChildren().add(
                 TitleComponent.builder()
-                        .text("Barry Minimum")
+                        .text("AFK Purity")
                         .build()
         );
 
